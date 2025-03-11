@@ -1,0 +1,7 @@
+openai==0.28.0
+python-dotenv
+langchain==0.1.4
+langchain-community>=0.0.14
+sentence-transformers==2.5.0
+chromadb==0.4.22
+requests==2.31.0 
