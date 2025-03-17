@@ -1,5 +1,5 @@
 """
-Ollama APIと連携するFastAPIバックエンド
+Z-works蓄電池営業アシスタント - OpenAI APIと連携するFastAPIバックエンド
 """
 
 from fastapi import FastAPI, Request
@@ -20,9 +20,9 @@ if platform.system() == "Windows":
     except ImportError:
         print("警告: patch_langchainモジュールが見つかりません。")
 
-from implementation_patched import AICoach, OLLAMA_API_BASE, MODEL_NAME, MockLLM
+from implementation_patched import AICoach, MODEL_NAME, OPENAI_API_KEY, MockLLM
 
-app = FastAPI(title="AI開発コーチLLM API")
+app = FastAPI(title="Z-works蓄電池営業アシスタント API")
 
 # CORS設定（フロントエンドからのアクセスを許可）
 app.add_middleware(
@@ -48,16 +48,16 @@ async def startup():
     try:
         # APIコーチを初期化
         use_mock = False
-        if not OLLAMA_API_BASE or OLLAMA_API_BASE == "http://localhost:11434":
-            print("警告: Ollama APIが設定されていないか、ローカルアドレスが指定されています。")
-            print("モックモードで起動するか、.envファイルで正しいAPIアドレスを設定してください。")
+        if not OPENAI_API_KEY:
+            print("警告: OpenAI APIキーが設定されていません。")
+            print("モックモードで起動するか、.envファイルで正しいAPIキーを設定してください。")
             use_mock = True
         
         coach = AICoach(use_mock=use_mock)
-        print(f"AIコーチを初期化しました。使用モデル: {MODEL_NAME}, API: {OLLAMA_API_BASE}")
+        print(f"Z-works蓄電池営業アシスタントを初期化しました。使用モデル: {MODEL_NAME}")
         print(f"モックモード: {use_mock}")
     except Exception as e:
-        print(f"エラー: AIコーチの初期化に失敗しました: {e}")
+        print(f"エラー: 営業アシスタントの初期化に失敗しました: {e}")
         sys.exit(1)
 
 @app.get("/api/info")
@@ -65,7 +65,7 @@ async def info():
     return {
         "status": "online",
         "model": MODEL_NAME,
-        "api_base": OLLAMA_API_BASE,
+        "api_service": "OpenAI",
         "mock_mode": isinstance(coach.llm, MockLLM) if coach else True
     }
 
@@ -73,7 +73,7 @@ async def info():
 async def chat(request: ChatRequest):
     global coach
     if not coach:
-        return ChatResponse(response="エラー: AIコーチが初期化されていません。")
+        return ChatResponse(response="エラー: 営業アシスタントが初期化されていません。")
     
     response = coach.get_response(request.message)
     return ChatResponse(response=response)

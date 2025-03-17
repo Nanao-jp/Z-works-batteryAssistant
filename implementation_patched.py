@@ -1,5 +1,5 @@
 """
-AI開発コーチLLM - Llama 3 8B + RAG実装（リモートAPI版）
+AI開発コーチLLM - OpenAI GPT + RAG実装
 Windowsでの互換性を改善したパッチ版
 """
 
@@ -23,12 +23,16 @@ from langchain.chains import LLMChain
 from langchain.memory import ConversationBufferMemory
 from typing import Any, Dict, List, Optional
 
+# OpenAI LLM
+from langchain_openai import ChatOpenAI
+
 # ベクトルストア関連のimportはtry-exceptで囲む
 try:
-    from langchain_community.embeddings import HuggingFaceEmbeddings
+    from langchain_openai import OpenAIEmbeddings
     from langchain_community.vectorstores import Chroma
     from langchain.text_splitter import RecursiveCharacterTextSplitter
     from langchain_community.document_loaders import DirectoryLoader, TextLoader
+    from langchain_community.document_loaders import UnstructuredMarkdownLoader
     from langchain.chains import RetrievalQA
     vector_store_available = True
 except ImportError as e:
@@ -44,131 +48,89 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # 設定パラメータ
-MODEL_NAME = os.getenv("MODEL_NAME", "llama3")
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-3.5-turbo")
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
 DOCS_DIR = os.getenv("DOCS_DIR", "./docs")
 DB_DIR = os.getenv("DB_DIR", "./db")
-# デフォルトは空にして必ず.envから設定するように促す
-OLLAMA_API_BASE = os.getenv("OLLAMA_API_BASE", "")
-OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")
+# OpenAI API Key
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
-# APIが設定されていない場合のチェック
-if not OLLAMA_API_BASE:
-    logger.error("OLLAMA_API_BASEが設定されていません。.envファイルにリモートOllama APIのURLを設定してください。")
-    raise ValueError("OLLAMA_API_BASEが設定されていません。.envファイルを確認してください。")
+# APIKeyが設定されていない場合のチェック
+if not OPENAI_API_KEY:
+    logger.error("OPENAI_API_KEYが設定されていません。.envファイルにAPIキーを設定してください。")
+    raise ValueError("OPENAI_API_KEYが設定されていません。.envファイルを確認してください。")
 
 # システムプロンプト
 SYSTEM_PROMPT = """
-あなたはAI開発のエキスパートコーチです。ユーザーがAI技術（機械学習、深層学習、強化学習、自然言語処理など）を学び、実践するのを支援します。
+あなたはZ-works社の系統用蓄電池営業アシスタントです。ユーザーが蓄電池製品に関する情報を求めたり、技術的な質問をしたり、見積もり支援を求めたりする際にサポートします。
 
 以下の方針に従ってください：
 1. 回答は正確で最新の情報に基づくこと
-2. 初心者には基本概念をわかりやすく説明し、上級者には深い洞察を提供すること
-3. 実践的なコード例を提供すること（主にPython、PyTorch、TensorFlow）
-4. 学習リソースを適切に推奨すること
-5. 質問の背後にある意図を理解し、適切な指導を行うこと
-6. 倫理的なAI開発の重要性を強調すること
+2. 製品の特徴や利点を明確に説明すること
+3. 技術的な質問には詳細かつ正確に回答すること
+4. 顧客のニーズに合わせた製品提案を行うこと
+5. 競合製品との比較情報を提供すること
+6. 成功事例や導入実績を紹介すること
 
 提供された参考情報があれば、それを活用して回答してください。
 ない場合は、あなたの知識を基に正確で有用な情報を提供してください。
 
-ユーザーの質問に応じて、概念説明、コード例、実装アドバイス、トラブルシューティング、最新トレンドなどの情報を提供してください。
+ユーザーの質問に応じて、製品説明、技術仕様、導入メリット、コスト面の情報などを提供してください。
 """
 
-# カスタムLLMクラス（Ollama API呼び出し用）
-class OllamaAPI(LLM):
-    """Ollama APIを呼び出すカスタムLLMクラス"""
+# OpenAI API用のLLMクラス
+class OpenAIAPI(LLM):
+    """OpenAI APIを呼び出すカスタムLLMクラス"""
     
-    api_base: str = OLLAMA_API_BASE
     model_name: str = MODEL_NAME
     temperature: float = TEMPERATURE
-    api_key: str = OLLAMA_API_KEY
+    api_key: str = OPENAI_API_KEY
     
     @property
     def _llm_type(self) -> str:
         """LLMタイプの取得"""
-        return "ollama_api"
+        return "openai_api"
     
     def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
         """APIを呼び出してレスポンスを取得"""
-        headers = {
-            "Content-Type": "application/json"
-        }
-        
-        # API認証キーがあれば追加
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        
-        payload = {
-            "model": self.model_name,
-            "prompt": prompt,
-            "temperature": self.temperature,
-            "stream": False,
-        }
-        
-        if stop:
-            payload["stop"] = stop
-        
         try:
-            logger.debug(f"API呼び出し: {self.api_base}/api/generate")
-            response = requests.post(
-                f"{self.api_base}/api/generate",
-                headers=headers,
-                json=payload,
-                timeout=60,  # 60秒のタイムアウト
-                verify=False  # 自己署名証明書を許可（テスト環境用）
+            # ChatOpenAIを使用
+            from langchain_openai.chat_models import ChatOpenAI
+            from langchain_core.messages import HumanMessage
+            
+            chat_model = ChatOpenAI(
+                model_name=self.model_name,
+                temperature=self.temperature,
+                openai_api_key=self.api_key
             )
             
-            if response.status_code != 200:
-                error_msg = f"API呼び出しエラー: ステータスコード {response.status_code}"
-                try:
-                    error_details = response.json()
-                    error_msg += f", 詳細: {json.dumps(error_details, ensure_ascii=False)}"
-                except:
-                    error_msg += f", レスポンス: {response.text}"
-                logger.error(error_msg)
-                return f"エラー: APIリクエストが失敗しました。{error_msg}"
+            # プロンプトをHumanMessageに変換
+            message = HumanMessage(content=prompt)
             
-            result = response.json()
-            text = result.get("response", "")
+            # メッセージを送信して応答を取得
+            response = chat_model.invoke([message])
+            return response.content
             
-            # ストップトークンの処理
-            if stop:
-                text = self._identify_stop_tokens(text, stop)
-                
-            return text
-            
-        except requests.exceptions.ConnectionError:
-            logger.error(f"API接続エラー: {self.api_base}に接続できません")
-            return "エラー: Ollama APIに接続できませんでした。サーバーが実行中か、URLが正しいか確認してください。"
         except Exception as e:
-            logger.error(f"API呼び出し中の例外: {str(e)}")
-            return f"エラー: API呼び出し中に例外が発生しました: {str(e)}"
-    
-    def _identify_stop_tokens(self, text: str, stop: List[str]) -> str:
-        """ストップトークンが含まれていたら、そこで切る"""
-        for stop_token in stop:
-            if stop_token in text:
-                return text[:text.index(stop_token)]
-        return text
+            logger.error(f"OpenAI API呼び出し中にエラーが発生しました: {e}")
+            return f"申し訳ありません。エラーが発生しました: {str(e)}"
 
 class AICoach:
     def __init__(self, use_mock=False):
-        """AIコーチの初期化"""
+        """営業アシスタントの初期化"""
         try:
             # テスト用の場合はモックLLMを使用
             if use_mock:
                 self.llm = MockLLM()
                 logger.info("モックLLMを使用します。")
             else:
-                # Ollama APIクライアントの初期化
-                self.llm = OllamaAPI(
-                    api_base=OLLAMA_API_BASE,
+                # OpenAI APIクライアントの初期化
+                self.llm = OpenAIAPI(
                     model_name=MODEL_NAME,
                     temperature=TEMPERATURE,
-                    api_key=OLLAMA_API_KEY
+                    api_key=OPENAI_API_KEY
                 )
-                logger.info(f"リモートOllama API ({OLLAMA_API_BASE}) に接続しました")
+                logger.info(f"OpenAI API に接続しました")
             
             # ベクトルストアの初期化（利用可能な場合のみ）
             if vector_store_available:
@@ -185,7 +147,7 @@ class AICoach:
             # 一般会話用のチェーンの初期化
             self.conversation_chain = self.setup_conversation_chain()
             
-            logger.info("AIコーチが正常に初期化されました")
+            logger.info("Z-works蓄電池営業アシスタントが正常に初期化されました")
         except Exception as e:
             logger.error(f"初期化エラー: {str(e)}")
             raise
@@ -195,8 +157,17 @@ class AICoach:
         # ベクトルストアが既に存在するか確認
         if os.path.exists(DB_DIR) and len(os.listdir(DB_DIR)) > 0:
             logger.info(f"既存のベクトルストアを読み込みます: {DB_DIR}")
-            embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-            self.vectorstore = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
+            try:
+                embeddings = OpenAIEmbeddings(
+                    model="text-embedding-ada-002",
+                    openai_api_key=OPENAI_API_KEY
+                )
+                self.vectorstore = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
+                logger.info("ベクトルストアを正常に読み込みました")
+            except Exception as e:
+                logger.error(f"既存のベクトルストア読み込みエラー: {str(e)}")
+                # 読み込みに失敗した場合は新規作成
+                self.create_vector_store()
         else:
             logger.info("ベクトルストアが見つかりません。新規作成します。")
             self.create_vector_store()
@@ -208,26 +179,53 @@ class AICoach:
             if not os.path.exists(DOCS_DIR):
                 os.makedirs(DOCS_DIR)
                 # サンプルファイルの作成
-                with open(os.path.join(DOCS_DIR, "sample.txt"), "w", encoding="utf-8") as f:
-                    f.write("これはAI開発の学習資料のサンプルです。実際のコンテンツに置き換えてください。")
+                with open(os.path.join(DOCS_DIR, "sample.md"), "w", encoding="utf-8") as f:
+                    f.write("# Z-works蓄電池製品情報サンプル\n\nこれは製品情報のサンプルです。実際のコンテンツに置き換えてください。")
                 logger.info(f"ドキュメントディレクトリを作成しました: {DOCS_DIR}")
             
             # ドキュメントの読み込み
             logger.info(f"ドキュメントを読み込みます: {DOCS_DIR}")
-            loader = DirectoryLoader(DOCS_DIR, glob="**/*.{txt,md,pdf}", loader_cls=TextLoader)
-            documents = loader.load()
+            documents = []
+            
+            # Markdownファイルの読み込み
+            md_files = [f for f in os.listdir(DOCS_DIR) if f.endswith('.md')]
+            logger.info(f"見つかったMarkdownファイル: {len(md_files)}")
+            
+            for md_file in md_files:
+                try:
+                    file_path = os.path.join(DOCS_DIR, md_file)
+                    logger.info(f"読み込み: {file_path}")
+                    loader = UnstructuredMarkdownLoader(file_path)
+                    documents.extend(loader.load())
+                except Exception as file_error:
+                    logger.error(f"ファイル {md_file} の読み込みエラー: {str(file_error)}")
             
             if len(documents) == 0:
                 logger.warning("ドキュメントが見つかりませんでした。基本的な会話のみ可能です。")
                 self.vectorstore = None
                 return
             
+            logger.info(f"読み込んだドキュメント数: {len(documents)}")
+            
             # テキスト分割
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
             splits = text_splitter.split_documents(documents)
+            logger.info(f"テキスト分割後のチャンク数: {len(splits)}")
             
             # ベクトルストアの作成
-            embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+            logger.info("ベクトルストアを作成中...")
+            embeddings = OpenAIEmbeddings(
+                model="text-embedding-ada-002",
+                openai_api_key=OPENAI_API_KEY
+            )
+            
+            # 既存のDBディレクトリがあれば削除
+            if os.path.exists(DB_DIR):
+                import shutil
+                shutil.rmtree(DB_DIR)
+                logger.info(f"既存のベクトルストアディレクトリを削除しました: {DB_DIR}")
+            
+            # 新規作成
             self.vectorstore = Chroma.from_documents(
                 documents=splits,
                 embedding=embeddings,
@@ -244,6 +242,10 @@ class AICoach:
         if self.vectorstore is None:
             return None
         
+        from langchain.chains.combine_documents import create_stuff_documents_chain
+        from langchain.chains.retrieval import create_retrieval_chain
+        
+        # プロンプトテンプレートを作成
         qa_prompt_template = """
 {system_prompt}
 
@@ -252,25 +254,30 @@ class AICoach:
 参考情報:
 {context}
 
-ユーザーの質問: {question}
+ユーザーの質問: {input}
 
 あなたの回答:
 """
         qa_prompt = PromptTemplate(
-            input_variables=["system_prompt", "context", "question"],
+            input_variables=["system_prompt", "context", "input"],
             template=qa_prompt_template,
         )
         
-        return RetrievalQA.from_chain_type(
-            llm=self.llm,
-            chain_type="stuff",
-            retriever=self.vectorstore.as_retriever(search_kwargs={"k": 3}),
-            chain_type_kwargs={"prompt": qa_prompt},
-            return_source_documents=True
-        )
+        # ドキュメント結合チェーンを作成
+        document_chain = create_stuff_documents_chain(self.llm, qa_prompt)
+        
+        # 検索チェーンを作成
+        retriever = self.vectorstore.as_retriever(search_kwargs={"k": 3})
+        retrieval_chain = create_retrieval_chain(retriever, document_chain)
+        
+        logger.info("RAG検索チェーンの設定が完了しました")
+        return retrieval_chain
     
     def setup_conversation_chain(self):
         """一般会話用のチェーンのセットアップ"""
+        from langchain_core.runnables import RunnablePassthrough
+        
+        # プロンプトテンプレートを作成
         conversation_prompt_template = """
 {system_prompt}
 
@@ -286,12 +293,16 @@ class AICoach:
             template=conversation_prompt_template,
         )
         
-        return LLMChain(
-            llm=self.llm,
-            prompt=conversation_prompt,
-            memory=self.memory,
-            verbose=False
+        # チェーン構築（新しい方法）
+        chain = (
+            {"system_prompt": lambda x: SYSTEM_PROMPT, 
+             "chat_history": lambda x: self.memory.load_memory_variables({})["chat_history"],
+             "question": lambda x: x["question"]}
+            | conversation_prompt
+            | self.llm
         )
+        
+        return chain
     
     def get_response(self, user_input):
         """ユーザー入力に対する応答を生成する"""
@@ -299,19 +310,39 @@ class AICoach:
             # RAGチェーンが利用可能な場合、まずそれを試す
             if self.qa_chain is not None:
                 try:
-                    result = self.qa_chain({"system_prompt": SYSTEM_PROMPT, "query": user_input})
-                    response = result["result"]
+                    # 検索のみを行って結果を表示（デバッグ用）
+                    retriever = self.vectorstore.as_retriever(search_kwargs={"k": 3})
+                    retrieved_docs = retriever.invoke(user_input)
+                    logger.info(f"検索結果: 文書数 {len(retrieved_docs)}")
+                    for i, doc in enumerate(retrieved_docs):
+                        logger.info(f"文書{i+1}のページ内容（抜粋）: {doc.page_content[:150]}...")
+                    
+                    # 新しいRetrievalChainの呼び出し方法
+                    result = self.qa_chain.invoke({
+                        "system_prompt": SYSTEM_PROMPT,
+                        "input": user_input
+                    })
+                    response = result["answer"]
                     logger.info("RAGベースの回答を生成しました")
+                    # メモリに会話を保存
+                    self.memory.save_context(
+                        {"input": user_input},
+                        {"output": response}
+                    )
                     return response
                 except Exception as e:
                     logger.warning(f"RAG回答生成エラー: {str(e)}。通常の会話チェーンを使用します。")
             
             # RAGチェーンが使えない場合や失敗した場合は通常の会話チェーンを使用
-            result = self.conversation_chain.predict(
-                system_prompt=SYSTEM_PROMPT,
-                question=user_input
-            )
+            result = self.conversation_chain.invoke({"question": user_input})
             logger.info("通常の会話チェーンで回答を生成しました")
+            
+            # メモリに会話を保存
+            self.memory.save_context(
+                {"input": user_input},
+                {"output": result}
+            )
+            
             return result
             
         except Exception as e:
@@ -334,43 +365,33 @@ def initialize_conversation(use_mock=False):
     """会話を初期化する"""
     try:
         coach = AICoach(use_mock=use_mock)
-        return coach, "AIコーチが起動しました。AI開発について質問してください。"
+        return coach, "Z-works蓄電池営業アシスタントが起動しました。製品について質問してください。"
     except Exception as e:
         logger.error(f"初期化エラー: {str(e)}")
-        return None, f"エラー: AIコーチの初期化に失敗しました。{str(e)}"
+        return None, f"エラー: 営業アシスタントの初期化に失敗しました。{str(e)}"
 
 def main():
     """簡易的なコンソールインターフェース"""
-    print("AI開発コーチLLM - Windows互換パッチ版")
-    print(f"API接続先: {OLLAMA_API_BASE}")
+    print("Z-works蓄電池営業アシスタント")
     print(f"使用モデル: {MODEL_NAME}")
-    print("-" * 50)
     
-    # テストモードのオプション
-    test_mode = False
-    if len(OLLAMA_API_BASE) == 0 or OLLAMA_API_BASE == "http://localhost:11434":
-        # APIサーバーが設定されていない場合
-        use_mock = input("Ollama APIサーバーが設定されていないか、ローカルに設定されています。テストモードで実行しますか？(y/n): ")
-        if use_mock.lower() == 'y':
-            test_mode = True
-            print("テストモードで実行します。実際のLLM機能は使用されません。")
+    use_mock = False
+    if not OPENAI_API_KEY:
+        print("警告: OpenAI APIキーが設定されていないため、モックモードで起動します。")
+        use_mock = True
     
-    coach, start_message = initialize_conversation(use_mock=test_mode)
-    if coach is None:
-        print(start_message)
-        return
+    coach, init_message = initialize_conversation(use_mock)
+    print(init_message)
     
-    print(start_message)
-    
-    while True:
-        user_input = input("\nあなた: ")
-        
-        if user_input.lower() in ["終了", "exit", "quit"]:
-            print("AIコーチを終了します。")
-            break
+    if coach:
+        while True:
+            user_input = input("\nあなたの質問 (終了するには 'exit' と入力): ")
+            if user_input.lower() in ['exit', 'quit', '終了']:
+                print("アシスタントを終了します。お役に立てて光栄です。")
+                break
             
-        response = coach.get_response(user_input)
-        print(f"\nAIコーチ: {response}")
+            response = coach.get_response(user_input)
+            print(f"\n回答: {response}")
 
 if __name__ == "__main__":
     main() 
