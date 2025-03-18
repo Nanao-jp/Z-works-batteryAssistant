@@ -1,0 +1,23 @@
+{
+  "name": "battery-assistant-frontend",
+  "version": "0.1.0",
+  "lockfileVersion": 2,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "battery-assistant-frontend",
+      "version": "0.1.0",
+      "dependencies": {
+        "next": "13.4.19",
+        "react": "18.2.0",
+        "react-dom": "18.2.0",
+        "axios": "1.5.0"
+      }
+    },
+    "node_modules/next": {
+      "version": "13.4.19",
+      "resolved": "https://registry.npmjs.org/next/-/next-13.4.19.tgz",
+      "integrity": "sha512-HkXi2fnnj8CG3J8nQJStSbuXX+RDHi5RZl1YSWIlJUTI1UMliq0VP4+ACsF88qV/xIhTEyAZ7eFIvcXBJ4NvIw=="
+    }
+  }
+} 
