@@ -3,4 +3,7 @@ uvicorn
 python-dotenv
 langchain
 langchain-openai  # 必須パッケージ - ChatOpenAIクラス用
+langchain-community  # 必須パッケージ - RAG/ベクトルストア用
+sentence-transformers  # 埋め込み生成用
+chromadb  # ベクターデータベース
 openai 
