@@ -2,5 +2,5 @@ fastapi
 uvicorn
 python-dotenv
 langchain
-langchain-openai
+langchain-openai  # 必須パッケージ - ChatOpenAIクラス用
 openai 
