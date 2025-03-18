@@ -1,1 +1,1 @@
-web: pip install -r requirements.txt && python -m uvicorn api_server:app --host=0.0.0.0 --port=$PORT 
+web: pip install -r requirements.txt && python -c "import uvicorn; uvicorn.run('api_server:app', host='0.0.0.0', port=int('${PORT}' or 8000))" 
