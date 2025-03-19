@@ -81,7 +81,7 @@ export default function Home() {
                     msg.isUser
                       ? "bg-blue-600 text-white rounded-br-none"
                       : "bg-gray-200 text-gray-800 rounded-bl-none"
-                  }`}
+                  } whitespace-pre-wrap`}
                 >
                   {msg.text}
                 </div>
